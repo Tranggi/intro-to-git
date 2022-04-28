@@ -1,0 +1,243 @@
+--Look for different LOS for HV in current data
+
+
+IF OBJECT_ID('tempdb..#Current_Read_Date_HV') IS NOT NULL
+    DROP TABLE #Current_Read_Date_HV
+	
+Select a.Read_Date,
+				A.Brand,
+				A.Site_Code,
+				A.Stay_Year,
+				A.Stay_Week,
+				A.Accomm_Code,
+				A.Market_Group,
+				A.Price_Currency,
+				B.Journey_Start_Date, 
+				B.Journey_End_Date 
+INTO #Current_Read_Date_HV
+FROM #Missing_pricing_Data_1 A
+	JOIN [INPUT_RAW_PRICES] B
+		on A.Site_Code = B.Accomm_Site_Code
+			and A.Accomm_Code = B.Accomm_Type_Code
+			and    ((A.journey_start_date between B.Stay_Date_From and DATEADD(dd,-1,B.Stay_Date_To_Check_Out)) or (A.journey_end_date between B.Stay_Date_From and B.Stay_Date_To_Check_Out)
+				OR (B.Stay_Date_From  between A.journey_start_date and A.journey_end_date) or (DATEADD(dd,-1,B.Stay_Date_To_Check_Out)  between A.journey_start_date and A.journey_end_date))	 
+	JOIN REF_COUNTRY_GROUPS_CVS G
+		on B.selling_market = G.Country
+			and A.Market_Group = G.Country_Group
+	JOIN REF_BRANDS C
+		on B.accomm_brand = C.Brand
+			and C.Brand_Agg = A.Brand
+WHERE A.Brand = 'Homair'			
+GROUP BY a.Read_Date,
+		A.Brand,
+		A.Site_Code,
+		A.Stay_Year,
+		A.Stay_Week,
+		A.Accomm_Code,
+		A.Market_Group,
+		A.Price_Currency,
+		B.Journey_Start_Date, 
+		B.Journey_End_Date
+
+INSERT INTO #P_DL_TEMP_INPUT_PRICES_STAY_WEEK
+
+SELECT A.Read_Date, 
+				A.Brand, 
+				A.Site_Code, 
+				A.Stay_Year, 
+				A.Stay_Week, 
+				W.Stay_Date_From, 
+				W.Stay_Date_To, 
+				A.Accomm_Code, 
+				I.DF_Accomm_Tier, 
+				I.OPT_Accomm_Tier, 
+				I.OPT_Capacity_Tier, 
+				I.AC_Flag,
+				A.Capacity, 
+				A.Bookings, 
+				A.Bookings_Linear, 
+				CASE 
+					WHEN A.Bookings > A.Capacity THEN 0	
+					ELSE A.Capacity - A.Bookings
+				END,
+				G.Country_Group as Market_Group, 
+				B.Price_Currency, 
+				AVG(B.Price_Catalog / DATEDIFF(dd,B.Journey_Start_Date,B.Journey_end_Date)) as Price_Catalog, 
+				AVG(B.Price_Discounted / DATEDIFF(dd,B.Journey_Start_Date,B.Journey_end_Date)) as Price_Discounted,
+				NULL, NULL,   --> EUR PRICES 
+				NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+				0 as Discount,
+				NULL,NULL,NULL
+FROM #P_DL_TEMP_INPUT_INVENTORY_WEEKLY A
+	JOIN #Current_Read_Date_HV H
+		on A.Read_Date = H.Read_Date
+			and A.Brand = H.Brand
+			and A.Site_Code = H.Site_Code
+			and A.Stay_Year = H.Stay_Year
+			and a.Stay_Week = H.Stay_Week
+			and A.Accomm_Code = H.Accomm_Code
+	JOIN REF_DATES_STAY_WEEK W
+		on A.Stay_YEar = W.Stay_Year 
+			and A.Stay_Week = W.Stay_Week
+	JOIN [INPUT_RAW_PRICES] B
+		on A.Site_Code = B.Accomm_Site_Code
+			and A.Accomm_Code = B.Accomm_Type_Code
+			and H.Journey_Start_Date = B.Journey_Start_Date
+			and H.Journey_End_Date = B.Journey_End_Date
+			and H.Price_Currency = B.price_currency
+	JOIN REF_BRANDS C
+		on B.accomm_brand = C.Brand
+			and C.Brand_Agg = A.Brand
+	JOIN REF_COUNTRY_GROUPS_CVS G
+		on B.selling_market = G.Country
+			and H.Market_Group = G.Country_Group
+	JOIN REF_INVENTORY_GROUPS I
+		on A.Accomm_Code = I.Accomm_Code
+GROUP BY A.Read_Date, 
+		A.Brand, 
+		A.Site_Code, 
+		A.Stay_Year, 
+		A.Stay_Week, 
+		W.Stay_Date_From, 
+		W.Stay_Date_To, 
+		A.Accomm_Code, 
+		I.DF_Accomm_Tier, 
+		I.OPT_Accomm_Tier, 
+		I.OPT_Capacity_Tier, 
+		I.AC_Flag,
+		A.Capacity, 
+		A.Bookings, 
+		A.Bookings_Linear, 
+		CASE 
+			WHEN A.Bookings > A.Capacity THEN 0		--> Bookings is now confirmed + linear
+			ELSE A.Capacity - A.Bookings
+		END,
+		G.Country_Group, 
+		B.Price_Currency
+
+
+
+-- Look in history
+
+IF OBJECT_ID('tempdb..#Historical_Read_Date_HV') IS NOT NULL
+    DROP TABLE #Historical_Read_Date_HV
+
+-- First: Date range match on current year
+
+Select a.Read_Date,
+				A.Brand,
+				A.Site_Code,
+				A.Stay_Year,
+				A.Stay_Week,
+				A.Accomm_Code,
+				A.Market_Group,
+				A.Price_Currency,
+				B.Journey_Start_Date, 
+				B.Journey_End_Date, 
+				MAX(B.read_Date) as max_read_date
+INTO #Historical_Read_Date_HV
+FROM #Missing_pricing_Data_1 A
+	JOIN [INPUT_RAW_PRICES_HISTORY_ARCHIVE] B
+		on B.read_date = max(B.read_date)
+		and A.Site_Code = B.Accomm_Site_Code
+			and A.Accomm_Code = B.Accomm_Type_Code
+			and    ((A.journey_start_date between B.Stay_Date_From and DATEADD(dd,-1,B.Stay_Date_To_Check_Out)) or (A.journey_end_date between B.Stay_Date_From and B.Stay_Date_To_Check_Out)
+				OR (B.Stay_Date_From  between A.journey_start_date and A.journey_end_date) or (DATEADD(dd,-1,B.Stay_Date_To_Check_Out)  between A.journey_start_date and A.journey_end_date))	 
+			and A.Price_Currency = B.price_currency
+	JOIN REF_COUNTRY_GROUPS_CVS G
+		on B.selling_market = G.Country
+			and A.Market_Group = G.Country_Group
+	JOIN REF_BRANDS C
+		on B.accomm_brand = C.Brand
+			and C.Brand_Agg = A.Brand
+where A.Brand = 'Homair'			
+GROUP BY a.Read_Date,
+		A.Brand,
+		A.Site_Code,
+		A.Stay_Year,
+		A.Stay_Week,
+		A.Accomm_Code,
+		A.Market_Group,
+		A.Price_Currency,
+		B.Journey_Start_Date, 
+		B.Journey_End_Date
+
+
+
+-- APPEND MULTIPLES LOS IN HISTORY
+
+INSERT INTO #P_DL_TEMP_INPUT_PRICES_STAY_WEEK
+
+SELECT A.Read_Date, 
+				A.Brand, 
+				A.Site_Code, 
+				A.Stay_Year, 
+				A.Stay_Week, 
+				W.Stay_Date_From, 
+				W.Stay_Date_To, 
+				A.Accomm_Code, 
+				I.DF_Accomm_Tier, 
+				I.OPT_Accomm_Tier, 
+				I.OPT_Capacity_Tier, 
+				I.AC_Flag,
+				A.Capacity, 
+				A.Bookings, 
+				A.Bookings_Linear, 
+				CASE 
+					WHEN A.Bookings > A.Capacity THEN 0	
+					ELSE A.Capacity - A.Bookings
+				END,
+				G.Country_Group as Market_Group, 
+				B.Price_Currency, 
+				AVG(B.Price_Catalog / DATEDIFF(dd,B.Journey_Start_Date,B.Journey_end_Date)) as Price_Catalog, 
+				AVG(B.Price_Discounted / DATEDIFF(dd,B.Journey_Start_Date,B.Journey_end_Date)) as Price_Discounted,
+				NULL, NULL,   --> EUR PRICES 
+				NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+				0 as Discount,
+				NULL,NULL,NULL
+FROM #P_DL_TEMP_INPUT_INVENTORY_WEEKLY A
+	JOIN #Historical_Read_Date_HV H
+		on A.Read_Date = H.Read_Date
+			and A.Brand = H.Brand
+			and A.Site_Code = H.Site_Code
+			and A.Stay_Year = H.Stay_Year
+			and a.Stay_Week = H.Stay_Week
+			and A.Accomm_Code = H.Accomm_Code
+	JOIN REF_DATES_STAY_WEEK W
+		on A.Stay_YEar = W.Stay_Year 
+			and A.Stay_Week = W.Stay_Week
+	JOIN [INPUT_RAW_PRICES_HISTORY_ARCHIVE] B
+		on A.Site_Code = B.Accomm_Site_Code
+			and A.Accomm_Code = B.Accomm_Type_Code
+			and H.Journey_Start_Date = B.Journey_Start_Date
+			and H.Journey_End_Date = B.Journey_End_Date
+			and H.Price_Currency = B.price_currency
+	JOIN REF_BRANDS C
+		on B.accomm_brand = C.Brand
+			and C.Brand_Agg = A.Brand
+	JOIN REF_COUNTRY_GROUPS_CVS G
+		on B.selling_market = G.Country
+			and H.Market_Group = G.Country_Group
+	JOIN REF_INVENTORY_GROUPS I
+		on A.Accomm_Code = I.Accomm_Code
+GROUP BY A.Read_Date, 
+		A.Brand, 
+		A.Site_Code, 
+		A.Stay_Year, 
+		A.Stay_Week, 
+		W.Stay_Date_From, 
+		W.Stay_Date_To, 
+		A.Accomm_Code, 
+		I.DF_Accomm_Tier, 
+		I.OPT_Accomm_Tier, 
+		I.OPT_Capacity_Tier, 
+		I.AC_Flag,
+		A.Capacity, 
+		A.Bookings, 
+		A.Bookings_Linear, 
+		CASE 
+			WHEN A.Bookings > A.Capacity THEN 0		--> Bookings is now confirmed + linear
+			ELSE A.Capacity - A.Bookings
+		END,
+		G.Country_Group, 
+		B.Price_Currency
